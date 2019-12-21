@@ -29,8 +29,6 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(PCAPPLUSPLUS REQUIRED PcapPlusPlus)
 # threading package
 find_package(Threads REQUIRED)
-# G3log for logging
-find_package(G3LOG REQUIRED)
 # Coverage report
 find_package(codecov)
 
@@ -49,11 +47,11 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(APPLICATION_NAME PacketSorter)
 set(SOURCE src/main.cpp)
 
-include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS} ${G3LOG_INCLUDE_DIRS})
+include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS})
 
 add_executable(${APPLICATION_NAME} ${SOURCE})
 
-target_link_libraries(${APPLICATION_NAME} ${PCAPPLUSPLUS_LIBRARIES} ${G3LOG_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(${APPLICATION_NAME} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 
 install(TARGETS ${APPLICATION_NAME}
   EXPORT ${PROJECT_NAME}Targets            # for downstream dependencies
