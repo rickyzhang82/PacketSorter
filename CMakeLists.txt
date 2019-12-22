@@ -49,6 +49,8 @@ set(SOURCE src/main.cpp)
 
 include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS})
 
+link_directories(${PCAPPLUSPLUS_LIBRARY_DIRS})
+
 add_executable(${APPLICATION_NAME} ${SOURCE})
 
 target_link_libraries(${APPLICATION_NAME} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
