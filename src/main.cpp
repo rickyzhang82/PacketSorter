@@ -114,6 +114,8 @@ public:
 		while (count_ == 0)
 		{
 			condition_.wait(lock);
+			if (exitSignal.load())
+				return;
 		}
 		--count_;
 	}
@@ -207,7 +209,7 @@ public:
 	 * A method getting connection parameters as input and returns a filename and file path as output.
 	 * The filename is constructed by the IPs (src and dst) and the TCP ports (src and dst)
 	 */
-	std::string getFileName(ConnectionData connData, int side, bool separareSides)
+	std::string getFileName(const ConnectionData& connData, int side, bool separareSides)
 	{
 		std::stringstream stream;
 
@@ -581,7 +583,7 @@ static void onPacketArrives(RawPacket* packet, PcapLiveDevice* dev, void* ringBu
 	// Clone a copy of raw packet by the copy c'tor.
 	TcpSorter::SPRawPacket spRawPacket = std::make_shared<RawPacket>(*packet);
 
-	if (rawPacketRB->push(spRawPacket))
+	if (rawPacketRB->push(std::move(spRawPacket)))
 	{
 		sem.release();
 	}
