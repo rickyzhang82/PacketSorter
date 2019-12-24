@@ -32,6 +32,15 @@ find_package(Threads REQUIRED)
 # Coverage report
 find_package(codecov)
 
+if(APPLE)
+    #
+    # We assume that APPLE means macOS so that we have the macOS
+    # frameworks.
+    #
+    find_library (APPLE_CORE_FOUNDATION_LIBRARY CoreFoundation)
+    find_library (APPLE_SYSTEM_CONFIGURATION_LIBRARY SystemConfiguration)
+endif()
+
 # Mac needed variables (adapt for your needs - http://www.cmake.org/Wiki/CMake_RPATH_handling#Mac_OS_X_and_the_RPATH)
 set(CMAKE_MACOSX_RPATH ON)
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
@@ -49,11 +58,21 @@ set(SOURCE src/main.cpp)
 
 include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS})
 
-link_directories(${PCAPPLUSPLUS_LIBRARY_DIRS})
+if(APPLE)
+    # Fix linking on 10.14+. See https://stackoverflow.com/questions/54068035
+    link_directories(/usr/local/lib ${PCAPPLUSPLUS_LIBRARY_DIRS})
+else()
+    link_directories(${PCAPPLUSPLUS_LIBRARY_DIRS})
+endif()
 
 add_executable(${APPLICATION_NAME} ${SOURCE})
 
-target_link_libraries(${APPLICATION_NAME} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+if(APPLE)
+    target_link_libraries(${APPLICATION_NAME} ${APPLE_CORE_FOUNDATION_LIBRARY} ${APPLE_SYSTEM_CONFIGURATION_LIBRARY} 
+        ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+else()
+    target_link_libraries(${APPLICATION_NAME} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+endif()
 
 install(TARGETS ${APPLICATION_NAME}
   EXPORT ${PROJECT_NAME}Targets            # for downstream dependencies
