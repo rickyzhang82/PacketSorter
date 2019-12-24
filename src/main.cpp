@@ -27,6 +27,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <boost/lockfree/spsc_queue.hpp>
 #include "TcpSorter.h"
 #include "PcapLiveDeviceList.h"
 #include "PcapFileDevice.h"
@@ -61,7 +62,17 @@ using namespace pcpp;
 #define DEFAULT_CLEAN_UP_INACTIVE_CONNECTION_PERIOD 60
 #define DEFAULT_MAX_SEGMENT_LIFE_TIME 60
 
+// Use network data rate and average packet size to calculate default packet ring buffer size
+#define DEFAULT_NETWORK_DATA_RATE_IN_MBPS 300ull
+#define DEFAULT_AVG_PACKET_SIZE_IN_BYTE 500ull
+#define DEFAULT_BUFFER_TIME_IN_SECONDS 30ull
+
+// derive the sie of ring buffer
+const uint64_t DEFAULT_PACKET_RING_BUFFER_SIZE = uint64_t(2ull * DEFAULT_BUFFER_TIME_IN_SECONDS * DEFAULT_NETWORK_DATA_RATE_IN_MBPS * 1024ull * 1024ull /8ull /DEFAULT_AVG_PACKET_SIZE_IN_BYTE);
+
 const std::string LOG_FILE_NAME("capture.log");
+// lock-free ring buffer for arrival packets
+boost::lockfree::spsc_queue<pcpp::TcpSorter::SPRawPacket> rawPacketRB(DEFAULT_PACKET_RING_BUFFER_SIZE);
 
 typedef std::shared_ptr<pcpp::PcapFileWriterDevice> SPPcapFileWriterDevice;
 typedef std::shared_ptr<std::ofstream> SPofStream;
