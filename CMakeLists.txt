@@ -29,7 +29,7 @@ find_package(PkgConfig REQUIRED)
 # PcapPlusPlus package
 pkg_check_modules(PCAPPLUSPLUS REQUIRED PcapPlusPlus)
 # Boost packet
-find_package(Boost REQUIRED COMPONENTS)
+find_package(Boost COMPONENTS thread REQUIRED)
 # threading package
 find_package(Threads REQUIRED)
 # Coverage report
