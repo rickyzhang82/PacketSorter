@@ -374,7 +374,7 @@ void listInterfaces()
  * The callback being called by the TCP sorter module whenever new data arrives on a certain connection
  */
 
-static void tcpPacketReadyCallback(int sideIndex, ConnectionData connData, TcpSorter::SPRawPacket spRawPacket, void* userCookie)
+static void tcpPacketReadyCallback(int sideIndex, const ConnectionData& connData, const TcpSorter::SPRawPacket& spRawPacket, void* userCookie)
 {
 	// extract the connection manager from the user cookie
 	TcpSorterConnMgr* connMgr = (TcpSorterConnMgr*)userCookie;
@@ -463,7 +463,7 @@ static void tcpPacketReadyCallback(int sideIndex, ConnectionData connData, TcpSo
 /**
  * The callback being called by the TCP sorter module whenever missing packet is found in capture
  */
-static void tcpPacketMissingCallback(int sideIndex, ConnectionData connData, uint32_t seq, uint32_t length, void* userCookie)
+static void tcpPacketMissingCallback(int sideIndex, const ConnectionData& connData, uint32_t seq, uint32_t length, void* userCookie)
 {
 	std::string sourceIP = connData.srcIP->toString();
 	std::string destIP = connData.dstIP->toString();
@@ -520,9 +520,9 @@ void printSummary(TcpSorterConnMgr* connMgr)
 
 	printf("\nSummary:\n"
 			 "----------\n");
-	printf("Total Number of Connections    : %lu\n", numTotalConn);
-	printf("Total Number of Packets        : %lu\n", numTotalPackets);
-	printf("Total Number of Messages       : %lu\n", numTotalMsgs);
+	printf("Total Number of Connections    : %llu\n", numTotalConn);
+	printf("Total Number of Packets        : %llu\n", numTotalPackets);
+	printf("Total Number of Messages       : %llu\n", numTotalMsgs);
 }
 
 /**
@@ -662,7 +662,7 @@ int main(int argc, char* argv[])
 				}
 				break;
 			case 'p':
-				if(sscanf(optarg, "%lu", &maxNumCapturedPacket) != 1) {
+				if(sscanf(optarg, "%llu", &maxNumCapturedPacket) != 1) {
 					printf("Invalid argument for maxNumCapturedPacket!");
 					exit(-1);
 				}
