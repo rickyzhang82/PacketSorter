@@ -27,6 +27,8 @@ option(BUILD_TESTS "Build PacketSorter perftests and unittests." ON)
 find_package(PkgConfig REQUIRED)
 # PcapPlusPlus package
 pkg_check_modules(PCAPPLUSPLUS REQUIRED PcapPlusPlus)
+# Boost packet
+find_package(Boost REQUIRED COMPONENTS)
 # threading package
 find_package(Threads REQUIRED)
 # Coverage report
@@ -56,7 +58,7 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(APPLICATION_NAME PacketSorter)
 set(SOURCE src/main.cpp)
 
-include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS})
+include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 
 if(APPLE)
     # Fix linking on 10.14+. See https://stackoverflow.com/questions/54068035
@@ -69,9 +71,9 @@ add_executable(${APPLICATION_NAME} ${SOURCE})
 
 if(APPLE)
     target_link_libraries(${APPLICATION_NAME} ${APPLE_CORE_FOUNDATION_LIBRARY} ${APPLE_SYSTEM_CONFIGURATION_LIBRARY} 
-        ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+        ${Boost_LIBRARIES} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 else()
-    target_link_libraries(${APPLICATION_NAME} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+    target_link_libraries(${APPLICATION_NAME} ${Boost_LIBRARIES} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 endif()
 
 install(TARGETS ${APPLICATION_NAME}
