@@ -143,6 +143,8 @@ private:
 
 // Semaphore to cordinate caputring thread and processing thread
 Semaphore sem(0);
+// lock-free ring buffer for arrival packets
+PacketRingBuffer rawPacketRB(DEFAULT_PACKET_RING_BUFFER_SIZE);
 
 static struct option TcpSorterOptions[] =
 {
@@ -574,16 +576,13 @@ static void onApplicationInterrupted(void* cookie)
 /**
  * packet capture callback - called whenever a packet arrives on the live device (in live device capturing mode)
  */
-static void onPacketArrives(RawPacket* packet, PcapLiveDevice* dev, void* ringBufferCookies)
+static void onPacketArrives(RawPacket* packet, PcapLiveDevice* dev, void* cookies)
 {
-	// get a pointer to the packet ring buffer instance and add the arrival packet to the ring buffer
-	PacketRingBuffer* rawPacketRB = (PacketRingBuffer*)ringBufferCookies;
-
 	// The libpcap engine might release the packet data after the callback function.
 	// Clone a copy of raw packet by the copy c'tor.
 	TcpSorter::SPRawPacket spRawPacket = std::make_shared<RawPacket>(*packet);
 
-	if (rawPacketRB->push(std::move(spRawPacket)))
+	if (rawPacketRB.push(std::move(spRawPacket)))
 	{
 		sem.release();
 	}
@@ -654,7 +653,7 @@ void doTcpSorterOnPcapFile(std::string fileName, TcpSorter& tcpSorter, TcpSorter
 	printf("Done!\n");
 }
 
-bool processPacket(TcpSorter& tcpSorter, PacketRingBuffer& rawPacketRB, bool* pShouldStop)
+bool processPacket(TcpSorter& tcpSorter, bool* pShouldStop)
 {
 	while (! *pShouldStop)
 	{
@@ -671,7 +670,7 @@ bool processPacket(TcpSorter& tcpSorter, PacketRingBuffer& rawPacketRB, bool* pS
 /**
  * The method responsible for TCP sorter on live traffic
  */
-void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, PacketRingBuffer& rawPacketRB, TcpSorterConnMgr* connMgr, std::string bpfFiler = "")
+void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, TcpSorterConnMgr* connMgr, std::string bpfFiler = "")
 {
 	// try to open device
 	if (!dev->open())
@@ -687,7 +686,7 @@ void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, PacketR
 	bool shouldStop = false;
 
 	// start processing thread
-	auto fut = std::async(std::launch::async, processPacket, std::ref(tcpSorter), std::ref(rawPacketRB), &shouldStop);
+	auto fut = std::async(std::launch::async, processPacket, std::ref(tcpSorter), &shouldStop);
 
 	printf("Starting packet capture on '%s'...\n", dev->getIPv4Address().toString().c_str());
 
@@ -726,8 +725,6 @@ int main(int argc, char* argv[])
 {
 	AppName::init(argc, argv);
 
-	// lock-free ring buffer for arrival packets
-	PacketRingBuffer rawPacketRB(DEFAULT_PACKET_RING_BUFFER_SIZE);
 
 	// configuration
 	std::string interfaceNameOrIP = "";
@@ -876,6 +873,6 @@ int main(int argc, char* argv[])
 
 
 		// start capturing packets and do TCP sorting
-		doTcpSorterOnLiveTraffic(dev, tcpSorter, rawPacketRB, &connMgr, bpfFilter);
+		doTcpSorterOnLiveTraffic(dev, tcpSorter, &connMgr, bpfFilter);
 	}
 }
