@@ -36,6 +36,8 @@
 #include "PcapPlusPlusVersion.h"
 #include "LRUList.h"
 #include <getopt.h>
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
 
 using namespace pcpp;
 
@@ -531,9 +533,9 @@ void printSummary(TcpSorterConnMgr* connMgr)
 
 	printf("\nSummary:\n"
 			 "----------\n");
-	printf("Total Number of Connections    : %llu\n", numTotalConn);
-	printf("Total Number of Packets        : %llu\n", numTotalPackets);
-	printf("Total Number of Messages       : %llu\n", numTotalMsgs);
+	printf("Total Number of Connections    : %" PRIu64 "\n", numTotalConn);
+	printf("Total Number of Packets        : %" PRIu64 "\n", numTotalPackets);
+	printf("Total Number of Messages       : %" PRIu64 "\n", numTotalMsgs);
 }
 
 /**
@@ -673,7 +675,7 @@ int main(int argc, char* argv[])
 				}
 				break;
 			case 'p':
-				if(sscanf(optarg, "%llu", &maxNumCapturedPacket) != 1) {
+				if(sscanf(optarg, "%" SCNu64, &maxNumCapturedPacket) != 1) {
 					printf("Invalid argument for maxNumCapturedPacket!");
 					exit(-1);
 				}
