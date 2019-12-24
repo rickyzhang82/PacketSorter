@@ -5,6 +5,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
 
 # CMake useful variables
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
@@ -27,6 +28,8 @@ option(BUILD_TESTS "Build PacketSorter perftests and unittests." ON)
 find_package(PkgConfig REQUIRED)
 # PcapPlusPlus package
 pkg_check_modules(PCAPPLUSPLUS REQUIRED PcapPlusPlus)
+# Boost packet
+find_package(Boost COMPONENTS thread REQUIRED)
 # threading package
 find_package(Threads REQUIRED)
 # Coverage report
@@ -50,13 +53,20 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 #enable_testing()
 
+# create host system marco
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+   add_definitions(-DLINUX)
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "FreeBSD")
+   add_definitions(-DFREEBSD)
+endif()
+
 ###########################################################################
 # build main program
 ###########################################################################
 set(APPLICATION_NAME PacketSorter)
 set(SOURCE src/main.cpp)
 
-include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS})
+include_directories(${PCAPPLUSPLUS_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 
 if(APPLE)
     # Fix linking on 10.14+. See https://stackoverflow.com/questions/54068035
@@ -69,9 +79,9 @@ add_executable(${APPLICATION_NAME} ${SOURCE})
 
 if(APPLE)
     target_link_libraries(${APPLICATION_NAME} ${APPLE_CORE_FOUNDATION_LIBRARY} ${APPLE_SYSTEM_CONFIGURATION_LIBRARY} 
-        ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+        ${Boost_LIBRARIES} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 else()
-    target_link_libraries(${APPLICATION_NAME} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+    target_link_libraries(${APPLICATION_NAME} ${Boost_LIBRARIES} ${PCAPPLUSPLUS_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 endif()
 
 install(TARGETS ${APPLICATION_NAME}

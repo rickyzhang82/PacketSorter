@@ -27,6 +27,11 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <future>
+#include <boost/lockfree/spsc_queue.hpp>
+#include <boost/thread/condition_variable.hpp>
+#include <boost/thread/mutex.hpp>
+#include <boost/thread/lock_types.hpp>
 #include "TcpSorter.h"
 #include "PcapLiveDeviceList.h"
 #include "PcapFileDevice.h"
@@ -35,6 +40,16 @@
 #include "PcapPlusPlusVersion.h"
 #include "LRUList.h"
 #include <getopt.h>
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
+#include <pthread.h>
+
+#if defined(FREEBSD)
+#include <pthread_np.h>
+#elif LINUX
+#include <sys/types.h>
+#include <sys/syscall.h>
+#endif
 
 using namespace pcpp;
 
@@ -61,10 +76,88 @@ using namespace pcpp;
 #define DEFAULT_CLEAN_UP_INACTIVE_CONNECTION_PERIOD 60
 #define DEFAULT_MAX_SEGMENT_LIFE_TIME 60
 
+// Use network data rate and average packet size to calculate default packet ring buffer size
+#define DEFAULT_NETWORK_DATA_RATE_IN_MBPS 300ull
+#define DEFAULT_AVG_PACKET_SIZE_IN_BYTE 500ull
+#define DEFAULT_BUFFER_TIME_IN_SECONDS 30ull
+
+// derive the sie of ring buffer
+const uint64_t DEFAULT_PACKET_RING_BUFFER_SIZE = uint64_t(2ull * DEFAULT_BUFFER_TIME_IN_SECONDS * DEFAULT_NETWORK_DATA_RATE_IN_MBPS * 1024ull * 1024ull /8ull /DEFAULT_AVG_PACKET_SIZE_IN_BYTE);
+
 const std::string LOG_FILE_NAME("capture.log");
 
 typedef std::shared_ptr<pcpp::PcapFileWriterDevice> SPPcapFileWriterDevice;
+typedef boost::lockfree::spsc_queue<pcpp::TcpSorter::SPRawPacket> PacketRingBuffer;
 typedef std::shared_ptr<std::ofstream> SPofStream;
+
+class Semaphore
+{
+public:
+	explicit Semaphore(uint64_t initial_count)
+		 : count_(initial_count),
+			 mutex_(),
+			 condition_(),
+			 exitSignal(false)
+	{
+	}
+
+	void release()
+	{
+		boost::unique_lock<boost::mutex> lock(mutex_);
+		if(exitSignal.load())
+			return;
+		++count_;
+		//Wake up any waiting threads.
+		//Always do this, even if count_ wasn't 0 on entry.
+		//Otherwise, we might not wake up enough waiting threads if we
+		//get a number of signal() calls in a row.
+		condition_.notify_one();
+	}
+
+	void acquire()
+	{
+		boost::unique_lock<boost::mutex> lock(mutex_);
+		if(exitSignal.load())
+			return;
+		while (count_ == 0)
+		{
+			condition_.wait(lock);
+			if (exitSignal.load())
+				return;
+		}
+		--count_;
+	}
+
+	void destroyAndReleaseAll()
+	{
+		boost::unique_lock<boost::mutex> lock(mutex_);
+		exitSignal.store(true);
+		condition_.notify_all();
+	}
+
+private:
+	//The current semaphore count.
+	uint64_t count_;
+	//mutex_ protects count_.
+	//Any code that reads or writes the count_ data must hold a lock on
+	//the mutex.
+	boost::mutex mutex_;
+	//Code that increments count_ must notify the condition variable.
+	boost::condition_variable condition_;
+	//exit signal
+	std::atomic<bool> exitSignal;
+};
+
+
+// Semaphore to cordinate caputring thread and processing thread
+Semaphore sem(0);
+// lock-free ring buffer for arrival packets
+PacketRingBuffer rawPacketRB(DEFAULT_PACKET_RING_BUFFER_SIZE);
+// core ID for thread
+const int CORD_ID_PROCESSING = 0;
+const int CORD_ID_RECEIVING = 1;
+const int CORD_ID_MAIN = 1;
+bool hasSetReceivingThread = false;
 
 static struct option TcpSorterOptions[] =
 {
@@ -131,7 +224,7 @@ public:
 	 * A method getting connection parameters as input and returns a filename and file path as output.
 	 * The filename is constructed by the IPs (src and dst) and the TCP ports (src and dst)
 	 */
-	std::string getFileName(ConnectionData connData, int side, bool separareSides)
+	std::string getFileName(const ConnectionData& connData, int side, bool separareSides)
 	{
 		std::stringstream stream;
 
@@ -308,6 +401,33 @@ struct TcpSorterData
 typedef std::map<uint32_t, TcpSorterData> TcpSorterConnMgr;
 typedef std::map<uint32_t, TcpSorterData>::iterator TcpSorterConnMgrIter;
 
+void threadIdentifier(const std::string& msg)
+{
+#ifdef FREEBSD
+	std::cout << msg << " - thread ID: " << pthread_getthreadid_np() << std::endl;
+#elif LINUX
+	std::cout << msg << " - thread ID: " << syscall(__NR_gettid) << std::endl;
+#endif
+}
+
+void threadCamper(const int coreID, const pthread_t& pid = pthread_self())
+{
+	const int core_id = coreID;
+
+	// cpu_set_t: This data set is a bitset where each bit represents a CPU.
+	cpu_set_t cpuset;
+	// CPU_ZERO: This macro initializes the CPU set set to be the empty set.
+	CPU_ZERO(&cpuset);
+	// CPU_SET: This macro adds cpu to the CPU set set.
+	CPU_SET(core_id, &cpuset);
+
+	// pthread_setaffinity_np: The pthread_setaffinity_np() function sets the CPU affinity mask of the thread thread to the CPU set pointed to by cpuset. If the call is successful, and the thread is not currently running on one of the CPUs in cpuset, then it is migrated to one of those CPUs.
+	const int set_result = pthread_setaffinity_np(pid, sizeof(cpu_set_t), &cpuset);
+	if (set_result != 0)
+	{
+		printf("Failed to set pthread_setaffinity_np (%d)\n", set_result);
+	}
+}
 /**
  * Print application usage
  */
@@ -496,15 +616,28 @@ static void onApplicationInterrupted(void* cookie)
 /**
  * packet capture callback - called whenever a packet arrives on the live device (in live device capturing mode)
  */
-static void onPacketArrives(RawPacket* packet, PcapLiveDevice* dev, void* tcpSorterCookie)
+static void onPacketArrives(RawPacket* packet, PcapLiveDevice* dev, void* cookies)
 {
-	// get a pointer to the TCP sorter instance and feed the packet arrived to it
-	TcpSorter* tcpSorter = (TcpSorter*)tcpSorterCookie;
-
+	if (!hasSetReceivingThread)
+	{
+		threadIdentifier(std::string("onPacketArrives()"));
+		threadCamper(CORD_ID_RECEIVING);
+		hasSetReceivingThread = true;
+	}
 	// The libpcap engine might release the packet data after the callback function.
 	// Clone a copy of raw packet by the copy c'tor.
 	TcpSorter::SPRawPacket spRawPacket = std::make_shared<RawPacket>(*packet);
-	tcpSorter->sortPacket(spRawPacket);
+
+	if (rawPacketRB.push(std::move(spRawPacket)))
+	{
+		sem.release();
+	}
+	// Ring buffer is full. It failed to add the packet.
+	else
+	{
+		SPofStream fileStream = GlobalConfig::getInstance().getLogFileStream();
+		*fileStream<< "Ring buffer is full! Drop the arrival packet." << std::endl;
+	}
 }
 
 void printSummary(TcpSorterConnMgr* connMgr)
@@ -520,9 +653,9 @@ void printSummary(TcpSorterConnMgr* connMgr)
 
 	printf("\nSummary:\n"
 			 "----------\n");
-	printf("Total Number of Connections    : %llu\n", numTotalConn);
-	printf("Total Number of Packets        : %llu\n", numTotalPackets);
-	printf("Total Number of Messages       : %llu\n", numTotalMsgs);
+	printf("Total Number of Connections    : %" PRIu64 "\n", numTotalConn);
+	printf("Total Number of Packets        : %" PRIu64 "\n", numTotalPackets);
+	printf("Total Number of Messages       : %" PRIu64 "\n", numTotalMsgs);
 }
 
 /**
@@ -566,6 +699,22 @@ void doTcpSorterOnPcapFile(std::string fileName, TcpSorter& tcpSorter, TcpSorter
 	printf("Done!\n");
 }
 
+bool processPacket(TcpSorter& tcpSorter, bool* pShouldStop)
+{
+	threadCamper(CORD_ID_PROCESSING);
+	threadIdentifier(std::string("processPacket()"));
+	while (! *pShouldStop)
+	{
+		sem.acquire();
+		if (rawPacketRB.read_available() > 0)
+		{
+			tcpSorter.sortPacket(rawPacketRB.front());
+			rawPacketRB.pop();
+		}
+	}
+	return true;
+}
+
 /**
  * The method responsible for TCP sorter on live traffic
  */
@@ -582,13 +731,17 @@ void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, TcpSort
 			EXIT_WITH_ERROR("Cannot set BPF filter to interface");
 	}
 
+	bool shouldStop = false;
+
+	// start processing thread
+	auto fut = std::async(std::launch::async, processPacket, std::ref(tcpSorter), &shouldStop);
+
 	printf("Starting packet capture on '%s'...\n", dev->getIPv4Address().toString().c_str());
 
 	// start capturing packets. Each packet arrived will be handled by onPacketArrives method
-	dev->startCapture(onPacketArrives, &tcpSorter);
+	dev->startCapture(onPacketArrives, &rawPacketRB);
 
 	// register the on app close event to print summary stats on app termination
-	bool shouldStop = false;
 	ApplicationEventHandler::getInstance().onApplicationInterrupted(onApplicationInterrupted, &shouldStop);
 
 	// run in an endless loop until the user presses ctrl+c
@@ -598,6 +751,11 @@ void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, TcpSort
 	// stop capturing and close the live device
 	dev->stopCapture();
 	dev->close();
+
+	// destroy semaphore
+	sem.destroyAndReleaseAll();
+	// wait until processing thread stops
+	fut.get();
 
 	// close all connections which are still opened
 	tcpSorter.closeAllConnections();
@@ -614,7 +772,10 @@ void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, TcpSort
 int main(int argc, char* argv[])
 {
 	AppName::init(argc, argv);
+	threadIdentifier(std::string("main()"));
+	threadCamper(CORD_ID_MAIN);
 
+	// configuration
 	std::string interfaceNameOrIP = "";
 	std::string inputPcapFileName = "";
 	std::string bpfFilter = "";
@@ -662,7 +823,7 @@ int main(int argc, char* argv[])
 				}
 				break;
 			case 'p':
-				if(sscanf(optarg, "%llu", &maxNumCapturedPacket) != 1) {
+				if(sscanf(optarg, "%" SCNu64, &maxNumCapturedPacket) != 1) {
 					printf("Invalid argument for maxNumCapturedPacket!");
 					exit(-1);
 				}
@@ -758,6 +919,7 @@ int main(int argc, char* argv[])
 			if (dev == nullptr)
 				EXIT_WITH_ERROR("Couldn't find interface by provided name");
 		}
+
 
 		// start capturing packets and do TCP sorting
 		doTcpSorterOnLiveTraffic(dev, tcpSorter, &connMgr, bpfFilter);
