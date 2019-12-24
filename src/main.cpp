@@ -448,16 +448,6 @@ static void tcpPacketReadyCallback(int sideIndex, const ConnectionData& connData
 
 	// write the new packet to the file
 	iter->second.pcapFileWriterSide[side]->writePacket(*spRawPacket);
-
-	// flush the packet
-	uint64_t numTotalPackets = iter->second.numOfDataPackets[0] + iter->second.numOfDataPackets[1];
-	uint64_t maxNumCapturedPacket = GlobalConfig::getInstance().maxNumCapturedPacket;
-	uint64_t commonDiv = (0 == maxNumCapturedPacket || (maxNumCapturedPacket > DEFAULT_MAX_NUMBER_OF_PACKETS_TO_FLUSH))?
-						DEFAULT_MAX_NUMBER_OF_PACKETS_TO_FLUSH: maxNumCapturedPacket;
-	if (0 == numTotalPackets % commonDiv)
-	{
-		iter->second.pcapFileWriterSide[side]->flush();
-	}
 }
 
 /**
