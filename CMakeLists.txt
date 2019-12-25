@@ -53,6 +53,13 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 #enable_testing()
 
+# create host system marco
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+   add_definitions(-DLINUX)
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "FreeBSD")
+   add_definitions(-DFREEBSD)
+endif()
+
 ###########################################################################
 # build main program
 ###########################################################################

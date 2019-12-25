@@ -44,6 +44,13 @@
 #include <inttypes.h>
 #include <pthread.h>
 
+#if defined(FREEBSD)
+#include <pthread_np.h>
+#elif LINUX
+#include <sys/types.h>
+#include <sys/syscall.h>
+#endif
+
 using namespace pcpp;
 
 #define EXIT_WITH_ERROR(reason, ...) do { \
@@ -146,6 +153,11 @@ private:
 Semaphore sem(0);
 // lock-free ring buffer for arrival packets
 PacketRingBuffer rawPacketRB(DEFAULT_PACKET_RING_BUFFER_SIZE);
+// core ID for thread
+const int CORD_ID_PROCESSING = 0;
+const int CORD_ID_RECEIVING = 1;
+const int CORD_ID_MAIN = 1;
+bool hasSetReceivingThread = false;
 
 static struct option TcpSorterOptions[] =
 {
@@ -389,6 +401,15 @@ struct TcpSorterData
 typedef std::map<uint32_t, TcpSorterData> TcpSorterConnMgr;
 typedef std::map<uint32_t, TcpSorterData>::iterator TcpSorterConnMgrIter;
 
+void threadIdentifier(const std::string& msg)
+{
+#ifdef FREEBSD
+	std::cout << msg << " - thread ID: " << pthread_getthreadid_np() << std::endl;
+#elif LINUX
+	std::cout << msg << " - thread ID: " << syscall(__NR_gettid) << std::endl;
+#endif
+}
+
 void threadCamper(const int coreID, const pthread_t& pid = pthread_self())
 {
 	const int core_id = coreID;
@@ -597,6 +618,12 @@ static void onApplicationInterrupted(void* cookie)
  */
 static void onPacketArrives(RawPacket* packet, PcapLiveDevice* dev, void* cookies)
 {
+	if (!hasSetReceivingThread)
+	{
+		threadIdentifier(std::string("onPacketArrives()"));
+		threadCamper(CORD_ID_RECEIVING);
+		hasSetReceivingThread = true;
+	}
 	// The libpcap engine might release the packet data after the callback function.
 	// Clone a copy of raw packet by the copy c'tor.
 	TcpSorter::SPRawPacket spRawPacket = std::make_shared<RawPacket>(*packet);
@@ -674,7 +701,8 @@ void doTcpSorterOnPcapFile(std::string fileName, TcpSorter& tcpSorter, TcpSorter
 
 bool processPacket(TcpSorter& tcpSorter, bool* pShouldStop)
 {
-	threadCamper(1);
+	threadCamper(CORD_ID_PROCESSING);
+	threadIdentifier(std::string("processPacket()"));
 	while (! *pShouldStop)
 	{
 		sem.acquire();
@@ -744,9 +772,8 @@ void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, TcpSort
 int main(int argc, char* argv[])
 {
 	AppName::init(argc, argv);
-
-	// set affinity
-	threadCamper(0);
+	threadIdentifier(std::string("main()"));
+	threadCamper(CORD_ID_MAIN);
 
 	// configuration
 	std::string interfaceNameOrIP = "";
