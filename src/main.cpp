@@ -90,67 +90,6 @@ typedef std::shared_ptr<pcpp::PcapFileWriterDevice> SPPcapFileWriterDevice;
 typedef boost::lockfree::spsc_queue<pcpp::TcpSorter::SPRawPacket> PacketRingBuffer;
 typedef std::shared_ptr<std::ofstream> SPofStream;
 
-class Semaphore
-{
-public:
-	explicit Semaphore(uint64_t initial_count)
-		 : count_(initial_count),
-			 mutex_(),
-			 condition_(),
-			 exitSignal(false)
-	{
-	}
-
-	void release()
-	{
-		boost::unique_lock<boost::mutex> lock(mutex_);
-		if(exitSignal.load())
-			return;
-		++count_;
-		//Wake up any waiting threads.
-		//Always do this, even if count_ wasn't 0 on entry.
-		//Otherwise, we might not wake up enough waiting threads if we
-		//get a number of signal() calls in a row.
-		condition_.notify_one();
-	}
-
-	void acquire()
-	{
-		boost::unique_lock<boost::mutex> lock(mutex_);
-		if(exitSignal.load())
-			return;
-		while (count_ == 0)
-		{
-			condition_.wait(lock);
-			if (exitSignal.load())
-				return;
-		}
-		--count_;
-	}
-
-	void destroyAndReleaseAll()
-	{
-		boost::unique_lock<boost::mutex> lock(mutex_);
-		exitSignal.store(true);
-		condition_.notify_all();
-	}
-
-private:
-	//The current semaphore count.
-	uint64_t count_;
-	//mutex_ protects count_.
-	//Any code that reads or writes the count_ data must hold a lock on
-	//the mutex.
-	boost::mutex mutex_;
-	//Code that increments count_ must notify the condition variable.
-	boost::condition_variable condition_;
-	//exit signal
-	std::atomic<bool> exitSignal;
-};
-
-
-// Semaphore to cordinate caputring thread and processing thread
-Semaphore sem(0);
 // lock-free ring buffer for arrival packets
 PacketRingBuffer rawPacketRB(DEFAULT_PACKET_RING_BUFFER_SIZE);
 // core ID for thread
@@ -628,12 +567,8 @@ static void onPacketArrives(RawPacket* packet, PcapLiveDevice* dev, void* cookie
 	// Clone a copy of raw packet by the copy c'tor.
 	TcpSorter::SPRawPacket spRawPacket = std::make_shared<RawPacket>(*packet);
 
-	if (rawPacketRB.push(std::move(spRawPacket)))
-	{
-		sem.release();
-	}
 	// Ring buffer is full. It failed to add the packet.
-	else
+	if (! rawPacketRB.push(std::move(spRawPacket)))
 	{
 		SPofStream fileStream = GlobalConfig::getInstance().getLogFileStream();
 		*fileStream<< "Ring buffer is full! Drop the arrival packet." << std::endl;
@@ -705,7 +640,6 @@ bool processPacket(TcpSorter& tcpSorter, bool* pShouldStop)
 	threadIdentifier(std::string("processPacket()"));
 	while (! *pShouldStop)
 	{
-		sem.acquire();
 		if (rawPacketRB.read_available() > 0)
 		{
 			tcpSorter.sortPacket(rawPacketRB.front());
@@ -752,8 +686,6 @@ void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, TcpSort
 	dev->stopCapture();
 	dev->close();
 
-	// destroy semaphore
-	sem.destroyAndReleaseAll();
 	// wait until processing thread stops
 	fut.get();
 
