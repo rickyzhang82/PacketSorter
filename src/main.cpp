@@ -42,6 +42,7 @@
 #include <getopt.h>
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
+#include <pthread.h>
 
 using namespace pcpp;
 
@@ -388,6 +389,24 @@ struct TcpSorterData
 typedef std::map<uint32_t, TcpSorterData> TcpSorterConnMgr;
 typedef std::map<uint32_t, TcpSorterData>::iterator TcpSorterConnMgrIter;
 
+void threadCamper(const int coreID, const pthread_t& pid = pthread_self())
+{
+	const int core_id = coreID;
+
+	// cpu_set_t: This data set is a bitset where each bit represents a CPU.
+	cpu_set_t cpuset;
+	// CPU_ZERO: This macro initializes the CPU set set to be the empty set.
+	CPU_ZERO(&cpuset);
+	// CPU_SET: This macro adds cpu to the CPU set set.
+	CPU_SET(core_id, &cpuset);
+
+	// pthread_setaffinity_np: The pthread_setaffinity_np() function sets the CPU affinity mask of the thread thread to the CPU set pointed to by cpuset. If the call is successful, and the thread is not currently running on one of the CPUs in cpuset, then it is migrated to one of those CPUs.
+	const int set_result = pthread_setaffinity_np(pid, sizeof(cpu_set_t), &cpuset);
+	if (set_result != 0)
+	{
+		printf("Failed to set pthread_setaffinity_np (%d)\n", set_result);
+	}
+}
 /**
  * Print application usage
  */
@@ -655,6 +674,7 @@ void doTcpSorterOnPcapFile(std::string fileName, TcpSorter& tcpSorter, TcpSorter
 
 bool processPacket(TcpSorter& tcpSorter, bool* pShouldStop)
 {
+	threadCamper(1);
 	while (! *pShouldStop)
 	{
 		sem.acquire();
@@ -725,6 +745,8 @@ int main(int argc, char* argv[])
 {
 	AppName::init(argc, argv);
 
+	// set affinity
+	threadCamper(0);
 
 	// configuration
 	std::string interfaceNameOrIP = "";
