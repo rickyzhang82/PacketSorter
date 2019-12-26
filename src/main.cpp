@@ -115,6 +115,7 @@ static struct option TcpSorterOptions[] =
 	{"max-segment-lifetime", required_argument, 0, 'g'},
 
 	{"separate-sides", no_argument, 0, 's'},
+	{"force-flush-packet", no_argument, 0, 'w'},
 	{"should-include-empty-segment", no_argument, 0, 'x'},
 	{"help", no_argument, 0, 'h'},
 	{"version", no_argument, 0, 'v'},
@@ -133,7 +134,8 @@ private:
 	 * A private c'tor (as this is a singleton)
 	 */
 	GlobalConfig() { outputDir = ""; separateSides = false; maxOpenFiles = DEFAULT_MAX_NUMBER_OF_CONCURRENT_OPEN_FILES;
-									 m_RecentConnsWithActivity = nullptr; maxNumCapturedPacket = 0; spLogFileStream = nullptr;}
+									 m_RecentConnsWithActivity = nullptr; maxNumCapturedPacket = 0; spLogFileStream = nullptr;
+									 shouldForceFlushPacket = false;}
 
 	// A least-recently-used (LRU) list of all connections seen so far. Each connection is represented by its flow key. This LRU list is used to decide which connection was seen least
 	// recently in case we reached max number of open file descriptors and we need to decide which files to close
@@ -154,6 +156,9 @@ public:
 
 	// a flag indicating whether to write both side of a connection to the same file (which is the default) or write each side to a separate file
 	bool separateSides;
+
+	// a flag indicating whether to flush packet
+	bool shouldForceFlushPacket;
 
 	// max number of allowed open files in each point in time
 	size_t maxOpenFiles;
@@ -406,6 +411,7 @@ void printUsage()
 			"    -x            : Exclude empty TCP packet (default: false)\n"
 			"    -s            : Write each side of each connection to a separate file (default is writing both sides of each connection to the same file)\n"
 			"    -l            : Print the list of interfaces and exit\n"
+			"    -w            : Force flushing TCP packet to files\n"
 			"    -v            : Displays the current version and exists\n"
 			"    -h            : Display this help message and exit\n\n", AppName::get().c_str());
 	exit(0);
@@ -525,14 +531,17 @@ static void tcpPacketReadyCallback(int sideIndex, const ConnectionData& connData
 	// write the new packet to the file
 	iter->second.pcapFileWriterSide[side]->writePacket(*spRawPacket);
 
-	// flush the packet
-	uint64_t numTotalPackets = iter->second.numOfDataPackets[0] + iter->second.numOfDataPackets[1];
-	uint64_t maxNumCapturedPacket = GlobalConfig::getInstance().maxNumCapturedPacket;
-	uint64_t commonDiv = (0 == maxNumCapturedPacket || (maxNumCapturedPacket > DEFAULT_MAX_NUMBER_OF_PACKETS_TO_FLUSH))?
-						DEFAULT_MAX_NUMBER_OF_PACKETS_TO_FLUSH: maxNumCapturedPacket;
-	if (0 == numTotalPackets % commonDiv)
+	if (GlobalConfig::getInstance().shouldForceFlushPacket)
 	{
-		iter->second.pcapFileWriterSide[side]->flush();
+		// flush the packet
+		uint64_t numTotalPackets = iter->second.numOfDataPackets[0] + iter->second.numOfDataPackets[1];
+		uint64_t maxNumCapturedPacket = GlobalConfig::getInstance().maxNumCapturedPacket;
+		uint64_t commonDiv = (0 == maxNumCapturedPacket || (maxNumCapturedPacket > DEFAULT_MAX_NUMBER_OF_PACKETS_TO_FLUSH))?
+							DEFAULT_MAX_NUMBER_OF_PACKETS_TO_FLUSH: maxNumCapturedPacket;
+		if (0 == numTotalPackets % commonDiv)
+		{
+			iter->second.pcapFileWriterSide[side]->flush();
+		}
 	}
 }
 
@@ -737,11 +746,12 @@ int main(int argc, char* argv[])
 	uint32_t cleanUpInactiveConnPeriod = DEFAULT_CLEAN_UP_INACTIVE_CONNECTION_PERIOD;
 	uint32_t maxSegmentLifeTime = DEFAULT_MAX_SEGMENT_LIFE_TIME;
 	bool shouldIncludeEmptySegments = true;
+	bool shouldForceFlushPacket = false;
 
 	int optionIndex = 0;
 	char opt = 0;
 
-	while((opt = getopt_long (argc, argv, "i:r:o:e:f:p:t:n:d:g:svhlx", TcpSorterOptions, &optionIndex)) != -1)
+	while((opt = getopt_long (argc, argv, "i:r:o:e:f:p:t:n:d:g:svhlxw", TcpSorterOptions, &optionIndex)) != -1)
 	{
 		switch (opt)
 		{
@@ -764,6 +774,9 @@ int main(int argc, char* argv[])
 				break;
 			case 'x':
 				shouldIncludeEmptySegments = false;
+				break;
+			case 'w':
+				shouldForceFlushPacket = true;
 				break;
 			case 'f':
 				if(sscanf(optarg, "%lu", &maxOpenFiles) != 1) {
@@ -829,6 +842,7 @@ int main(int argc, char* argv[])
 	GlobalConfig::getInstance().separateSides = separateSides;
 	GlobalConfig::getInstance().maxOpenFiles = maxOpenFiles;
 	GlobalConfig::getInstance().maxNumCapturedPacket = maxNumCapturedPacket;
+	GlobalConfig::getInstance().shouldForceFlushPacket = shouldForceFlushPacket;
 
 	if (! directoryExists(outputDir))
 	{
