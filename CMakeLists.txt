@@ -24,6 +24,17 @@ include(Common)
 
 option(BUILD_TESTS "Build PacketSorter perftests and unittests." ON)
 
+# create host system marco
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+   add_definitions(-DLINUX)
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "FreeBSD")
+   add_definitions(-DFREEBSD)
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+   add_definitions((-DDARWIN))
+else()
+   message( FATAL_ERROR "Do not support host system ${CMAKE_HOST_SYSTEM_NAME}")
+endif()
+
 # the `pkg_check_modules` function is created with this call
 find_package(PkgConfig REQUIRED)
 # PcapPlusPlus package
@@ -53,12 +64,6 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 #enable_testing()
 
-# create host system marco
-if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
-   add_definitions(-DLINUX)
-elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "FreeBSD")
-   add_definitions(-DFREEBSD)
-endif()
 
 ###########################################################################
 # build main program

@@ -46,7 +46,9 @@
 
 #if defined(FREEBSD)
 #include <pthread_np.h>
-#elif LINUX
+#include <sys/_cpuset.h>
+#include <sys/cpuset.h>
+#elif defined(LINUX)
 #include <sys/types.h>
 #include <sys/syscall.h>
 #endif
@@ -349,24 +351,39 @@ void threadIdentifier(const std::string& msg)
 #endif
 }
 
+#if defined(FREEBSD) || defined(LINUX)
 void threadCamper(const int coreID, const pthread_t& pid = pthread_self())
 {
 	const int core_id = coreID;
-
 	// cpu_set_t: This data set is a bitset where each bit represents a CPU.
+#ifdef LINUX
 	cpu_set_t cpuset;
+#else
+	cpuset_t cpuset;
+#endif
 	// CPU_ZERO: This macro initializes the CPU set set to be the empty set.
 	CPU_ZERO(&cpuset);
 	// CPU_SET: This macro adds cpu to the CPU set set.
 	CPU_SET(core_id, &cpuset);
 
 	// pthread_setaffinity_np: The pthread_setaffinity_np() function sets the CPU affinity mask of the thread thread to the CPU set pointed to by cpuset. If the call is successful, and the thread is not currently running on one of the CPUs in cpuset, then it is migrated to one of those CPUs.
+#ifdef LINUX
 	const int set_result = pthread_setaffinity_np(pid, sizeof(cpu_set_t), &cpuset);
+#else
+	const int set_result = pthread_setaffinity_np(pid, sizeof(cpuset_t), &cpuset);
+#endif
 	if (set_result != 0)
 	{
 		printf("Failed to set pthread_setaffinity_np (%d)\n", set_result);
 	}
 }
+#else
+void threadCamper(const int coreID, const pthread_t& pid = pthread_self())
+{
+	return;
+}
+#endif
+
 /**
  * Print application usage
  */
