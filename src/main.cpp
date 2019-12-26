@@ -79,12 +79,12 @@ using namespace pcpp;
 #define DEFAULT_MAX_SEGMENT_LIFE_TIME 60
 
 // Use network data rate and average packet size to calculate default packet ring buffer size
-#define DEFAULT_NETWORK_DATA_RATE_IN_MBPS 300ull
-#define DEFAULT_AVG_PACKET_SIZE_IN_BYTE 500ull
-#define DEFAULT_BUFFER_TIME_IN_SECONDS 30ull
+#define DEFAULT_NETWORK_DATA_RATE_IN_MBPS 300
+#define DEFAULT_AVG_PACKET_SIZE_IN_BYTE 200
+#define DEFAULT_BUFFER_TIME_IN_SECONDS 10
 
 // derive the sie of ring buffer
-const uint64_t DEFAULT_PACKET_RING_BUFFER_SIZE = uint64_t(2ull * DEFAULT_BUFFER_TIME_IN_SECONDS * DEFAULT_NETWORK_DATA_RATE_IN_MBPS * 1024ull * 1024ull /8ull /DEFAULT_AVG_PACKET_SIZE_IN_BYTE);
+const uint32_t DEFAULT_PACKET_RING_BUFFER_SIZE = uint32_t(2 * DEFAULT_BUFFER_TIME_IN_SECONDS * DEFAULT_NETWORK_DATA_RATE_IN_MBPS * 1024 * 128 / DEFAULT_AVG_PACKET_SIZE_IN_BYTE);
 
 const std::string LOG_FILE_NAME("capture.log");
 
@@ -680,8 +680,10 @@ bool processPacket(TcpSorter& tcpSorter, bool* pShouldStop)
  */
 void doTcpSorterOnLiveTraffic(PcapLiveDevice* dev, TcpSorter& tcpSorter, TcpSorterConnMgr* connMgr, std::string bpfFiler = "")
 {
+	PcapLiveDevice::DeviceConfiguration deviceConfig;
+	deviceConfig.packetBufferSize = DEFAULT_PACKET_RING_BUFFER_SIZE * DEFAULT_AVG_PACKET_SIZE_IN_BYTE;
 	// try to open device
-	if (!dev->open())
+	if (!dev->open(deviceConfig))
 		EXIT_WITH_ERROR("Cannot open interface");
 
 	// set BPF filter if set by the user
