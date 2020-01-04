@@ -167,8 +167,14 @@ public:
 	{
 		// open the file on the disk (with append or overwrite mode)
 		SPPcapFileWriterDevice spFileWriter = std::make_shared<PcapFileWriterDevice>(fileName.c_str());
-		spFileWriter->open(reopen);
-		return spFileWriter;
+		if (spFileWriter->open(reopen))
+		{
+			return spFileWriter;
+		}
+		else
+		{
+			return nullptr;
+		}
 	}
 
 
@@ -415,7 +421,7 @@ static void tcpPacketReadyCallback(int sideIndex, const ConnectionData& connData
 			if (iter2 != connMgr->end())
 			{
 				// close files on both sides (if they're open)
-				for (int index = 0; index < 1; index++)
+				for (int index = 0; index < 2; index++)
 				{
 					if (iter2->second.pcapFileWriterSide[index] != nullptr)
 					{
@@ -434,6 +440,22 @@ static void tcpPacketReadyCallback(int sideIndex, const ConnectionData& connData
 
 		// open the file in overwrite mode (if this is the first time the file is opened) or in append mode (if it was already opened before)
 		iter->second.pcapFileWriterSide[side] = GlobalConfig::getInstance().openFileWriter(fileName, iter->second.reopenFileWriter[side]);
+
+		if (nullptr == iter->second.pcapFileWriterSide[side])
+		{
+			std::string sourceIP = connData.srcIP->toString();
+			std::string destIP = connData.dstIP->toString();
+			std::string dir = sideIndex == 0? " => " : " <= ";
+			SPofStream fileStream = GlobalConfig::getInstance().getLogFileStream();
+
+			*fileStream<< "Failed to write pcap file: " << "side(" << sideIndex <<"), "
+								<< sourceIP << ":" << connData.srcPort
+								<< dir
+								<< destIP <<":" << connData.dstPort
+								<< std::endl;
+			return;
+		}
+
 	}
 	// if this messages comes on a different side than previous message seen on this connection
 	if (sideIndex != iter->second.curSide)
@@ -467,6 +489,34 @@ static void tcpPacketMissingCallback(int sideIndex, const ConnectionData& connDa
 				<< destIP <<":" << connData.dstPort
 				<< ", seq(" << seq <<"), len(" << length <<")"
 				<< std::endl;
+}
+
+static void tcpConnectionClosedCallback(const ConnectionData& connData, void* userCookie)
+{
+	// extract the connection manager from the user cookie
+	TcpSorterConnMgr* connMgr = (TcpSorterConnMgr*)userCookie;
+
+	uint32_t flowKey = connData.flowKey;
+	// check if this flow already appears in the connection manager. If not add it
+	TcpSorterConnMgrIter iter = connMgr->find(flowKey);
+	if (iter == connMgr->end())
+	{
+		return;
+	}
+
+	// close file writer
+	for (int index = 0; index < 2; index++)
+	{
+		if (nullptr != iter->second.pcapFileWriterSide[index])
+		{
+			GlobalConfig::getInstance().closeFileWriter(iter->second.pcapFileWriterSide[index]);
+			iter->second.pcapFileWriterSide[index] = nullptr;
+		}
+	}
+
+	// erase TcpSorterData
+	GlobalConfig::getInstance().getRecentConnsWithActivity()->eraseElement(flowKey);
+	connMgr->erase(flowKey);
 }
 
 /*********************************************************************
@@ -726,7 +776,7 @@ int main(int argc, char* argv[])
 														 maxSegmentLifeTime, shouldIncludeEmptySegments);
 
 	// create the TCP sorter instance
-	TcpSorter tcpSorter(tcpPacketReadyCallback, tcpPacketMissingCallback, &connMgr, cfg);
+	TcpSorter tcpSorter(tcpPacketReadyCallback, tcpPacketMissingCallback, tcpConnectionClosedCallback, &connMgr, cfg);
 
 	// analyze in pcap file mode
 	if (inputPcapFileName != "")
